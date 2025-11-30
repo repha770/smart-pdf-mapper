@@ -5,20 +5,22 @@ import streamlit as st
 
 st.set_page_config(page_title="PDF → Excel avec modèle", layout="wide")
 
-st.title("🧾 PDF → Excel basé sur un modèle de colonnes")
+st.title("🧾 PDF → Excel avec modèle & mapping manuel")
 
 st.markdown("""
 Ce site fait :
-1. Upload **PDF modèle** (optionnel, juste pour toi).
-2. Upload **modèle de colonnes** (Excel/CSV ou saisie manuelle).
-3. Upload **PDF à extraire**.
-4. Mapping colonnes modèle ↔ colonnes extraites.
-5. Export en **Excel** propre selon ton modèle.
+1. Tu saisis **tes noms de colonnes** (ce que tu veux dans l'Excel final).
+2. Tu uploades un **PDF modèle** pour récupérer sa structure (colonnes).
+3. Tu uploades ton **PDF à extraire** (plusieurs pages possibles).
+4. Tu **mappe chaque colonne finale** avec une colonne du modèle.
+5. Tu télécharges un **Excel** structuré.
 """)
 
-
+# -----------------------------
+# FONCTION D'EXTRACTION PDF
+# -----------------------------
 def extract_tables_from_pdf(uploaded_pdf):
-    """Retourne un DataFrame concaténé avec toutes les tables trouvées dans un PDF Streamlit."""
+    """Retourne un DataFrame concaténé avec toutes les tables trouvées dans un PDF."""
     all_tables = []
 
     with pdfplumber.open(uploaded_pdf) as pdf:
@@ -28,7 +30,7 @@ def extract_tables_from_pdf(uploaded_pdf):
                 df = pd.DataFrame(t)
                 if df.empty:
                     continue
-                # On suppose que la 1ère ligne = entêtes
+                # On suppose que la première ligne est l'entête
                 df.columns = df.iloc[0]
                 df = df[1:]
                 df["__page__"] = page_number
@@ -42,126 +44,119 @@ def extract_tables_from_pdf(uploaded_pdf):
     return df
 
 
-# ---------- 1) PDF MODELE (juste pour info) ----------
-st.subheader("1️⃣ PDF modèle (optionnel)")
-pdf_model = st.file_uploader("PDF modèle (facultatif)", type=["pdf"])
-if pdf_model is not None:
-    st.info("PDF modèle chargé (il sert uniquement de référence visuelle, pas d'extraction).")
+# -----------------------------
+# 1) SAISIE DES NOMS DE COLONNES
+# -----------------------------
+st.subheader("1️⃣ Tes noms de colonnes (pour l'Excel)")
 
-
-# ---------- 2) MODELE DE COLONNES ----------
-st.subheader("2️⃣ Modèle de colonnes")
-
-col_file = st.file_uploader(
-    "Fichier modèle de colonnes (Excel ou CSV). Sinon, laisse vide et saisis à la main en dessous.",
-    type=["xlsx", "xls", "csv"]
+colonnes_input = st.text_input(
+    "Saisis les noms de colonnes, séparés par des virgules :",
+    value="nom,prenom,telephone,email"
 )
 
-colonnes_modele = []
+colonnes_finales = []
+if colonnes_input.strip():
+    colonnes_finales = [c.strip() for c in colonnes_input.split(",") if c.strip()]
 
-if col_file is not None:
-    ext = col_file.name.split(".")[-1].lower()
-    if ext in ["xlsx", "xls"]:
-        df_cols = pd.read_excel(col_file)
-    else:
-        df_cols = pd.read_csv(col_file)
-
-    st.write("Aperçu du fichier de colonnes :")
-    st.dataframe(df_cols.head())
-
-    mode_cols = st.radio(
-        "Comment récupérer les colonnes du modèle ?",
-        ["Utiliser les en-têtes du fichier", "Utiliser les valeurs d'une colonne"],
-        horizontal=True,
-    )
-
-    if mode_cols == "Utiliser les en-têtes du fichier":
-        colonnes_modele = list(df_cols.columns)
-    else:
-        col_select = st.selectbox(
-            "Colonne contenant la liste des noms de colonnes",
-            df_cols.columns
-        )
-        colonnes_modele = (
-            df_cols[col_select]
-            .dropna()
-            .astype(str)
-            .tolist()
-        )
+if colonnes_finales:
+    st.success(f"Colonnes finales : {colonnes_finales}")
 else:
-    manuel = st.text_input(
-        "Ou saisis manuellement les noms de colonnes (séparés par des virgules) :",
-        value="nom,prenom,telephone,email"
-    )
-    if manuel.strip():
-        colonnes_modele = [c.strip() for c in manuel.split(",") if c.strip()]
-
-if colonnes_modele:
-    st.success(f"Colonnes du modèle : {colonnes_modele}")
-else:
-    st.warning("Aucune colonne modèle pour l'instant.")
+    st.warning("Saisis au moins une colonne pour continuer.")
 
 
-# ---------- 3) PDF A EXTRAIRE ----------
-st.subheader("3️⃣ PDF à extraire")
+# -----------------------------
+# 2) PDF MODELE
+# -----------------------------
+st.subheader("2️⃣ PDF modèle (pour récupérer la structure)")
 
-pdf_extract = st.file_uploader("PDF à extraire", type=["pdf"])
+pdf_modele = st.file_uploader("Choisis le PDF modèle", type=["pdf"])
 
-df_extrait = None
+df_modele = None
+colonnes_modele_pdf = []
+
+if pdf_modele is not None:
+    df_modele = extract_tables_from_pdf(pdf_modele)
+    if df_modele is None or df_modele.empty:
+        st.error("Aucune table détectée dans le PDF modèle.")
+    else:
+        st.write("Aperçu du PDF modèle (tables détectées) :")
+        st.dataframe(df_modele.head(30))
+
+        # Colonnes disponibles dans le PDF modèle (on enlève la colonne __page__)
+        colonnes_modele_pdf = [c for c in df_modele.columns if c != "__page__"]
+        st.info(f"Colonnes détectées dans le modèle : {colonnes_modele_pdf}")
+
+
+# -----------------------------
+# 3) PDF A EXTRAIRE
+# -----------------------------
+st.subheader("3️⃣ PDF à extraire (plusieurs pages possibles)")
+
+pdf_extract = st.file_uploader("Choisis le PDF à extraire", type=["pdf"])
+
+df_extract = None
 if pdf_extract is not None:
-    df_extrait = extract_tables_from_pdf(pdf_extract)
-    if df_extrait is None or df_extrait.empty:
-        st.error("Aucune table détectée dans ce PDF.")
+    df_extract = extract_tables_from_pdf(pdf_extract)
+    if df_extract is None or df_extract.empty:
+        st.error("Aucune table détectée dans le PDF à extraire.")
     else:
-        st.write("Aperçu des données extraites du PDF :")
-        st.dataframe(df_extrait.head(50))
+        st.write("Aperçu du PDF à extraire (tables détectées) :")
+        st.dataframe(df_extract.head(30))
 
 
-# ---------- 4) MAPPING & EXPORT ----------
-if df_extrait is not None and colonnes_modele:
-    st.subheader("4️⃣ Mapping colonnes modèle ↔ colonnes extraites & export Excel")
+# -----------------------------
+# 4) MAPPING & EXPORT
+# -----------------------------
+if colonnes_finales and df_modele is not None and df_extract is not None and colonnes_modele_pdf:
+    st.subheader("4️⃣ Mapping de tes colonnes ↔ éléments du PDF modèle")
 
-    df_extrait.columns = df_extrait.columns.astype(str)
-    colonnes_extraites = list(df_extrait.columns)
+    # On s'assure que les colonnes du DF extrait sont des strings
+    df_extract.columns = df_extract.columns.astype(str)
 
-    st.write("Colonnes extraites du PDF :")
-    st.write(colonnes_extraites)
-
-    st.markdown("### Associe chaque colonne du modèle à une colonne extraite")
+    # On suppose que la structure des colonnes du PDF extrait
+    # est la même que celle du PDF modèle
+    options_source = ["-- Aucune --"] + colonnes_modele_pdf
 
     mapping = {}
-    options_source = ["-- Aucune --"] + colonnes_extraites
+    st.markdown("Associe chaque **colonne finale** à une **colonne du PDF modèle** :")
 
-    for col_mod in colonnes_modele:
-        # tentative d'auto-match si le nom existe déjà
+    for col_finale in colonnes_finales:
+        # Auto-suggestion si le même nom existe dans le modèle
         default_index = 0
-        if col_mod in colonnes_extraites:
-            default_index = options_source.index(col_mod)
+        if col_finale in colonnes_modele_pdf:
+            default_index = options_source.index(col_finale)
 
         choix = st.selectbox(
-            f"Source pour la colonne modèle **{col_mod}**",
+            f"Source pour la colonne finale **{col_finale}**",
             options_source,
             index=default_index,
+            key=f"map_{col_finale}",
         )
         if choix != "-- Aucune --":
-            mapping[col_mod] = choix
+            mapping[col_finale] = choix
 
     if mapping:
-        st.write("Mapping utilisé :")
+        st.write("Mapping utilisé (colonne finale → colonne du modèle) :")
         st.json(mapping)
 
-        # construction du DF final, dans l'ordre du modèle
+        # Construction du DataFrame final, dans l'ordre de TES colonnes
         df_final = pd.DataFrame()
-        for col_mod in colonnes_modele:
-            if col_mod in mapping:
-                src = mapping[col_mod]
-                df_final[col_mod] = df_extrait[src].astype(str).fillna("")
+        for col_finale in colonnes_finales:
+            if col_finale in mapping:
+                src = mapping[col_finale]
+                # On prend la colonne correspondante dans le PDF extrait
+                if src in df_extract.columns:
+                    df_final[col_finale] = df_extract[src].astype(str).fillna("")
+                else:
+                    # Si jamais la colonne n'existe pas dans l'extrait, on met vide
+                    df_final[col_finale] = ""
             else:
-                df_final[col_mod] = ""
+                df_final[col_finale] = ""
 
-        st.subheader("Aperçu du résultat final")
+        st.subheader("Aperçu du résultat final (Excel)")
         st.dataframe(df_final.head(50))
 
+        # Export Excel
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             df_final.to_excel(writer, index=False, sheet_name="Données")
@@ -170,10 +165,10 @@ if df_extrait is not None and colonnes_modele:
         st.download_button(
             label="📥 Télécharger l'Excel final",
             data=buffer,
-            file_name="export_modele_pdf.xlsx",
+            file_name="export_pdf_modele.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     else:
-        st.info("Configure au moins une colonne dans le mapping pour générer l'Excel.")
-elif pdf_extract is not None and not colonnes_modele:
-    st.info("Tu as chargé le PDF à extraire, mais pas encore le modèle de colonnes.")
+        st.info("Mappe au moins une colonne pour pouvoir générer l'Excel.")
+elif pdf_extract is not None and (not colonnes_finales or df_modele is None):
+    st.info("Il manque soit tes colonnes finales, soit le PDF modèle, soit les deux.")
